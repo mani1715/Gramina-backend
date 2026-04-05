@@ -37,6 +37,10 @@ app = FastAPI()
 
 # Get allowed origins from environment or use defaults
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
+# Strip trailing slash if present
+if FRONTEND_URL and FRONTEND_URL.endswith('/'):
+    FRONTEND_URL = FRONTEND_URL[:-1]
+
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -47,15 +51,47 @@ ALLOWED_ORIGINS = [
 if FRONTEND_URL and FRONTEND_URL not in ALLOWED_ORIGINS:
     ALLOWED_ORIGINS.append(FRONTEND_URL)
 
-# Add CORS middleware - allow all origins for Railway deployment
+# CORS Configuration - Multiple layers for Railway compatibility
+# Layer 1: FastAPI CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for now to fix Railway deployment
+    allow_origins=["*"],  # Allow all origins for Railway deployment
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=3600,
 )
+
+# Layer 2: Custom middleware for additional CORS headers
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class AdditionalCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Handle preflight
+        if request.method == "OPTIONS":
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Max-Age": "3600",
+                }
+            )
+        
+        response = await call_next(request)
+        
+        # Ensure CORS headers are present
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
+
+app.add_middleware(AdditionalCORSMiddleware)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -66,6 +102,24 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Root level health check (before API router)
+@app.get("/")
+async def root():
+    return {
+        "status": "healthy",
+        "message": "GramaMitra Backend API",
+        "version": "1.0.0",
+        "cors": "enabled"
+    }
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "database": "connected" if client else "disconnected",
+        "cors": "enabled"
+    }
 
 # JWT Configuration
 JWT_ALGORITHM = "HS256"
