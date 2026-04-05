@@ -47,45 +47,15 @@ ALLOWED_ORIGINS = [
 if FRONTEND_URL and FRONTEND_URL not in ALLOWED_ORIGINS:
     ALLOWED_ORIGINS.append(FRONTEND_URL)
 
-# Custom CORS middleware to handle dynamic origins with credentials
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
-
-class DynamicCORSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        origin = request.headers.get("origin", "")
-        
-        # Handle preflight requests first
-        if request.method == "OPTIONS":
-            response = Response(
-                status_code=200,
-                headers={
-                    "Access-Control-Allow-Origin": origin if origin else "*",
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
-                    "Access-Control-Allow-Headers": request.headers.get(
-                        "access-control-request-headers", 
-                        "Content-Type, Authorization, X-Requested-With, Accept, Origin"
-                    ),
-                    "Access-Control-Max-Age": "86400",
-                }
-            )
-            return response
-        
-        # Process actual request
-        response = await call_next(request)
-        
-        # Add CORS headers to response
-        if origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
-            response.headers["Access-Control-Max-Age"] = "86400"
-        
-        return response
-
-app.add_middleware(DynamicCORSMiddleware)
+# Add CORS middleware - allow all origins for Railway deployment
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for now to fix Railway deployment
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
