@@ -24,14 +24,14 @@ import math
 from bson import ObjectId
 import certifi
 
-# MongoDB connection - with fallback for Railway
+# MongoDB connection - aggressive TLS bypass for dynamic cloud hosts (Railway)
 mongo_url = os.environ.get('MONGO_URL', os.environ.get('MONGODB_URL', 'mongodb://localhost:27017'))
 db_name = os.environ.get('DB_NAME', 'gramamitra')
 
 try:
-    client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
+    client = AsyncIOMotorClient(mongo_url, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000)
 except Exception:
-    client = AsyncIOMotorClient(mongo_url) # Fallback if standard TLS causes issues
+    client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
 
 db = client[db_name]
 
@@ -164,14 +164,25 @@ async def send_otp_email(email: str, otp: str):
     message.attach(MIMEText(html, "html"))
     
     try:
-        await aiosmtplib.send(
-            message,
-            hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-            port=int(os.environ.get("SMTP_PORT", "587")),
-            username=os.environ.get("SMTP_USER"),
-            password=os.environ.get("SMTP_PASSWORD"),
-            start_tls=True
-        )
+        port = int(os.environ.get("SMTP_PORT", "587"))
+        if port == 465:
+            await aiosmtplib.send(
+                message,
+                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
+                port=port,
+                username=os.environ.get("SMTP_USER"),
+                password=os.environ.get("SMTP_PASSWORD"),
+                use_tls=True
+            )
+        else:
+            await aiosmtplib.send(
+                message,
+                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
+                port=port,
+                username=os.environ.get("SMTP_USER"),
+                password=os.environ.get("SMTP_PASSWORD"),
+                start_tls=True
+            )
         logger.info(f"OTP sent to {email}")
         return True
     except Exception as e:
