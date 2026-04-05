@@ -62,9 +62,7 @@ if FRONTEND_URL and FRONTEND_URL.endswith('/'):
     FRONTEND_URL = FRONTEND_URL[:-1]
 
 ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://gramina-frontend-production.up.railway.app",
+    "*",
 ]
 
 # Add frontend URL if provided and not already in list
