@@ -24,13 +24,33 @@ import certifi
 mongo_url = os.environ.get('MONGO_URL', os.environ.get('MONGODB_URL', 'mongodb://localhost:27017'))
 db_name = os.environ.get('DB_NAME', 'gramamitra')
 
-# Only enforce TLS if it is an Atlas URL (+srv) or explicit in URL
-if "+srv" in mongo_url or "tls=true" in mongo_url.lower():
-    client = AsyncIOMotorClient(mongo_url, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000)
-else:
-    client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
-
-db = client[db_name]
+# Initialize MongoDB client with error handling
+try:
+    # Only enforce TLS if it is an Atlas URL (+srv) or explicit in URL
+    if "+srv" in mongo_url or "tls=true" in mongo_url.lower():
+        client = AsyncIOMotorClient(
+            mongo_url, 
+            tls=True, 
+            tlsAllowInvalidCertificates=True, 
+            serverSelectionTimeoutMS=10000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=10000
+        )
+    else:
+        client = AsyncIOMotorClient(
+            mongo_url, 
+            serverSelectionTimeoutMS=10000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=10000
+        )
+    
+    db = client[db_name]
+    print(f"MongoDB client initialized with database: {db_name}")
+except Exception as e:
+    print(f"Warning: MongoDB connection error: {e}")
+    print("App will start but database operations may fail")
+    client = None
+    db = None
 
 # Create the main app
 app = FastAPI()
@@ -1203,35 +1223,66 @@ app.include_router(api_router)
 # Startup event
 @app.on_event("startup")
 async def startup_event():
+    """Startup event with comprehensive error handling"""
+    logger.info("=" * 50)
+    logger.info("GramaMitra Backend Starting Up")
+    logger.info("=" * 50)
+    
+    # Log environment configuration
+    logger.info(f"Database Name: {db_name}")
+    logger.info(f"MongoDB URL configured: {'Yes' if mongo_url else 'No'}")
+    logger.info(f"Frontend URL: {FRONTEND_URL if FRONTEND_URL else 'Not set'}")
+    logger.info(f"JWT Secret configured: {'Yes' if os.environ.get('JWT_SECRET') else 'No (using default)'}")
+    
+    # Check if database is accessible
+    if db is None:
+        logger.error("MongoDB client not initialized. Database operations will fail.")
+        return
+    
     # Create indexes with error handling so app doesn't crash if DB is down
     try:
+        logger.info("Creating database indexes...")
         await db.users.create_index("email", unique=True)
         await db.jobs.create_index("createdBy")
         await db.applications.create_index([("jobId", 1), ("userId", 1)])
-        logger.info("Database indexes verified.")
+        logger.info("✓ Database indexes verified successfully")
     except Exception as e:
-        logger.error(f"Failed to create indexes. MongoDB might be unreachable: {e}")
+        logger.error(f"✗ Failed to create indexes. MongoDB might be unreachable: {e}")
+        logger.error("App will continue but database operations may fail")
     
     # Seed admin (only if ADMIN_EMAIL and ADMIN_PASSWORD are set)
     admin_email = os.environ.get("ADMIN_EMAIL")
     admin_password = os.environ.get("ADMIN_PASSWORD")
     
-    if admin_email and admin_password:
-        existing = await db.users.find_one({"email": admin_email})
-        
-        if existing is None:
-            await db.users.insert_one({
-                "email": admin_email,
-                "password_hash": hash_password(admin_password),
-                "name": "Admin",
-                "phone": "9999999999",
-                "area": "Admin Area",
-                "role": "admin",
-                "email_verified": True,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-            logger.info(f"Admin user created: {admin_email}")
+    if admin_email and admin_password and db is not None:
+        try:
+            existing = await db.users.find_one({"email": admin_email})
+            
+            if existing is None:
+                await db.users.insert_one({
+                    "email": admin_email,
+                    "password_hash": hash_password(admin_password),
+                    "name": "Admin",
+                    "phone": "9999999999",
+                    "area": "Admin Area",
+                    "role": "admin",
+                    "email_verified": True,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"✓ Admin user created: {admin_email}")
+            else:
+                logger.info(f"✓ Admin user already exists: {admin_email}")
+        except Exception as e:
+            logger.error(f"✗ Failed to create admin user: {e}")
+    
+    logger.info("=" * 50)
+    logger.info("✓ Startup Complete - Server Ready")
+    logger.info("=" * 50)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    """Shutdown event"""
+    logger.info("Shutting down...")
+    if client:
+        client.close()
+        logger.info("MongoDB client closed")
