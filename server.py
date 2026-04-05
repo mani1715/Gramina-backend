@@ -40,10 +40,11 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://gramina-frontend-production.up.railway.app",
 ]
 
-# Add frontend URL if provided
-if FRONTEND_URL:
+# Add frontend URL if provided and not already in list
+if FRONTEND_URL and FRONTEND_URL not in ALLOWED_ORIGINS:
     ALLOWED_ORIGINS.append(FRONTEND_URL)
 
 # Custom CORS middleware to handle dynamic origins with credentials
@@ -54,20 +55,32 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         origin = request.headers.get("origin", "")
         
-        # Handle preflight requests
+        # Handle preflight requests first
         if request.method == "OPTIONS":
-            response = Response(status_code=200)
-        else:
-            response = await call_next(request)
+            response = Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": origin if origin else "*",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+                    "Access-Control-Allow-Headers": request.headers.get(
+                        "access-control-request-headers", 
+                        "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+                    ),
+                    "Access-Control-Max-Age": "86400",
+                }
+            )
+            return response
         
-        # Allow the specific origin that made the request
-        # This is safe because we're explicitly setting the origin from the request
+        # Process actual request
+        response = await call_next(request)
+        
+        # Add CORS headers to response
         if origin:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-            req_headers = request.headers.get("access-control-request-headers", "")
-            response.headers["Access-Control-Allow-Headers"] = req_headers if req_headers else "Content-Type, Authorization, X-Requested-With, bypass-tunnel-reminder, ngrok-skip-browser-warning"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
             response.headers["Access-Control-Max-Age"] = "86400"
         
         return response
