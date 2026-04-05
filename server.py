@@ -149,7 +149,7 @@ async def send_otp_email(email: str, otp: str):
     message["Subject"] = "GramaMitra - Your OTP Code | మీ OTP కోడ్"
     message["From"] = os.environ.get("SMTP_USER")
     message["To"] = email
-    
+
     html = f"""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px;">
@@ -162,32 +162,62 @@ async def send_otp_email(email: str, otp: str):
     </html>
     """
     message.attach(MIMEText(html, "html"))
-    
+
+    # Port 465 with implicit TLS (use_tls=True) is preferred on Railway because
+    # Railway's network commonly blocks port 587 and STARTTLS connections to Gmail.
+    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", "465"))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_password = os.environ.get("SMTP_PASSWORD")
+
+    logger.info(
+        f"Attempting SMTP connection — host={smtp_host}, port={smtp_port}, "
+        f"user={smtp_user}, tls={'implicit (use_tls)' if smtp_port == 465 else 'STARTTLS (start_tls)'}"
+    )
+
     try:
-        port = int(os.environ.get("SMTP_PORT", "587"))
-        if port == 465:
+        if smtp_port == 465:
+            # Implicit TLS — recommended for Railway deployments
             await aiosmtplib.send(
                 message,
-                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-                port=port,
-                username=os.environ.get("SMTP_USER"),
-                password=os.environ.get("SMTP_PASSWORD"),
-                use_tls=True
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                use_tls=True,
+                timeout=30,
             )
         else:
+            # STARTTLS — port 587; may be blocked on some cloud providers
             await aiosmtplib.send(
                 message,
-                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-                port=port,
-                username=os.environ.get("SMTP_USER"),
-                password=os.environ.get("SMTP_PASSWORD"),
-                start_tls=True
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                start_tls=True,
+                timeout=30,
             )
-        logger.info(f"OTP sent to {email}")
+        logger.info(f"OTP email delivered successfully to {email}")
         return True, ""
+    except aiosmtplib.SMTPAuthenticationError as e:
+        error_msg = f"SMTP authentication failed (check SMTP_USER / SMTP_PASSWORD): {e}"
+        logger.error(f"send_otp_email auth error — {error_msg}")
+        return False, error_msg
+    except aiosmtplib.SMTPConnectError as e:
+        error_msg = (
+            f"SMTP connection refused on {smtp_host}:{smtp_port}. "
+            f"If using port 587, try switching SMTP_PORT to 465. Details: {e}"
+        )
+        logger.error(f"send_otp_email connect error — {error_msg}")
+        return False, error_msg
+    except aiosmtplib.SMTPException as e:
+        error_msg = f"SMTP error on {smtp_host}:{smtp_port}: {e}"
+        logger.error(f"send_otp_email SMTP error — {error_msg}")
+        return False, error_msg
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Failed to send OTP: {error_msg}")
+        error_msg = f"Unexpected error sending email via {smtp_host}:{smtp_port}: {e}"
+        logger.error(f"send_otp_email unexpected error — {error_msg}")
         return False, error_msg
 
 # Pydantic Models
@@ -1303,6 +1333,111 @@ async def get_dashboard_stats(request: Request):
         "recentJobs": [{"id": str(j["_id"]), "title": j["title"], "date": j.get("createdAt", "")} for j in recent_jobs],
         "recentApplications": [{"id": str(a["_id"]), "jobTitle": a.get("jobTitle", ""), "status": a.get("status", "pending")} for a in recent_apps]
     }
+
+# SMTP Diagnostic endpoint
+class SMTPTestRequest(BaseModel):
+    email: Optional[str] = None
+
+@api_router.post("/test-smtp")
+async def test_smtp(data: SMTPTestRequest = SMTPTestRequest()):
+    """
+    Diagnostic endpoint to verify SMTP connectivity and credentials.
+    Sends a test email to the provided address (or to SMTP_USER if omitted)
+    and returns detailed connection/auth results without going through the
+    full registration flow.
+    """
+    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", "465"))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_password = os.environ.get("SMTP_PASSWORD")
+
+    target_email = data.email or smtp_user
+
+    config_info = {
+        "smtp_host": smtp_host,
+        "smtp_port": smtp_port,
+        "smtp_user": smtp_user,
+        "tls_mode": "implicit TLS (use_tls=True)" if smtp_port == 465 else "STARTTLS (start_tls=True)",
+        "target_email": target_email,
+    }
+
+    if not smtp_user or not smtp_password:
+        logger.warning("test-smtp called but SMTP_USER or SMTP_PASSWORD is not set")
+        return {
+            "success": False,
+            "config": config_info,
+            "error": "SMTP_USER and/or SMTP_PASSWORD environment variables are not configured.",
+        }
+
+    if not target_email:
+        return {
+            "success": False,
+            "config": config_info,
+            "error": "No target email provided and SMTP_USER is not set.",
+        }
+
+    logger.info(
+        f"test-smtp: probing {smtp_host}:{smtp_port} as {smtp_user}, "
+        f"sending to {target_email}"
+    )
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = "GramaMitra - SMTP Diagnostic Test"
+    message["From"] = smtp_user
+    message["To"] = target_email
+    message.attach(MIMEText(
+        "<html><body><p>This is a diagnostic test email from GramaMitra. "
+        "If you received this, your SMTP configuration is working correctly.</p></body></html>",
+        "html",
+    ))
+
+    try:
+        if smtp_port == 465:
+            await aiosmtplib.send(
+                message,
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                use_tls=True,
+                timeout=30,
+            )
+        else:
+            await aiosmtplib.send(
+                message,
+                hostname=smtp_host,
+                port=smtp_port,
+                username=smtp_user,
+                password=smtp_password,
+                start_tls=True,
+                timeout=30,
+            )
+        logger.info(f"test-smtp: diagnostic email delivered to {target_email}")
+        return {
+            "success": True,
+            "config": config_info,
+            "message": f"Test email sent successfully to {target_email}.",
+        }
+    except aiosmtplib.SMTPAuthenticationError as e:
+        error_msg = f"Authentication failed — verify SMTP_USER and SMTP_PASSWORD (use an App Password for Gmail): {e}"
+        logger.error(f"test-smtp auth error: {error_msg}")
+        return {"success": False, "config": config_info, "error": error_msg}
+    except aiosmtplib.SMTPConnectError as e:
+        error_msg = (
+            f"Connection refused on {smtp_host}:{smtp_port}. "
+            f"Railway may be blocking this port — try SMTP_PORT=465 with implicit TLS. Details: {e}"
+        )
+        logger.error(f"test-smtp connect error: {error_msg}")
+        return {"success": False, "config": config_info, "error": error_msg}
+    except aiosmtplib.SMTPException as e:
+        error_msg = f"SMTP protocol error on {smtp_host}:{smtp_port}: {e}"
+        logger.error(f"test-smtp SMTP error: {error_msg}")
+        return {"success": False, "config": config_info, "error": error_msg}
+    except Exception as e:
+        error_msg = f"Unexpected error: {e}"
+        logger.error(f"test-smtp unexpected error: {error_msg}")
+        return {"success": False, "config": config_info, "error": error_msg}
+
 
 # Health check
 @api_router.get("/")
