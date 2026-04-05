@@ -74,7 +74,7 @@ if FRONTEND_URL and FRONTEND_URL not in ALLOWED_ORIGINS:
 # Layer 1: FastAPI CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for Railway deployment
+    allow_origins=ALLOWED_ORIGINS, # Allow all origins for Railway deployment
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -92,7 +92,7 @@ class AdditionalCORSMiddleware(BaseHTTPMiddleware):
             return Response(
                 status_code=200,
                 headers={
-                    "Access-Control-Allow-Origin": "*",
+                   "Access-Control-Allow-Origin": "https://gramina-frontend-production.up.railway.app",
                     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
                     "Access-Control-Allow-Headers": "*",
                     "Access-Control-Allow-Credentials": "true",
