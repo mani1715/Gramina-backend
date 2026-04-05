@@ -365,8 +365,43 @@ async def login(user_data: UserLogin, response: Response):
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/", secure=True, samesite="none")
-    response.delete_cookie("refresh_token", path="/", secure=True, samesite="none")
+    # Clear cookies with all possible configurations for cross-origin
+    # Delete with same settings used during set
+    response.delete_cookie(
+        key="access_token", 
+        path="/", 
+        secure=True, 
+        samesite="none",
+        httponly=True
+    )
+    response.delete_cookie(
+        key="refresh_token", 
+        path="/", 
+        secure=True, 
+        samesite="none",
+        httponly=True
+    )
+    # Also set expired cookies to force browser to clear them
+    response.set_cookie(
+        key="access_token", 
+        value="", 
+        path="/", 
+        secure=True, 
+        samesite="none",
+        httponly=True,
+        max_age=0,
+        expires=0
+    )
+    response.set_cookie(
+        key="refresh_token", 
+        value="", 
+        path="/", 
+        secure=True, 
+        samesite="none",
+        httponly=True,
+        max_age=0,
+        expires=0
+    )
     return {"message": "Logged out successfully"}
 
 @api_router.get("/auth/me")
