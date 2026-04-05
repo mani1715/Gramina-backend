@@ -184,10 +184,11 @@ async def send_otp_email(email: str, otp: str):
                 start_tls=True
             )
         logger.info(f"OTP sent to {email}")
-        return True
+        return True, ""
     except Exception as e:
-        logger.error(f"Failed to send OTP: {e}")
-        return False
+        error_msg = str(e)
+        logger.error(f"Failed to send OTP: {error_msg}")
+        return False, error_msg
 
 # Pydantic Models
 class UserCreate(BaseModel):
@@ -339,7 +340,10 @@ async def register(user_data: UserCreate, response: Response):
     await db.users.insert_one(user_doc)
     
     # Send OTP
-    await send_otp_email(email, otp)
+    success, err_msg = await send_otp_email(email, otp)
+    if not success:
+        await db.users.delete_one({"email": email})
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP email: {err_msg}. Please check Railway SMTP variables.")
     
     return {"message": "Registration successful. Please verify your email.", "email": email}
 
@@ -408,7 +412,9 @@ async def resend_otp(data: OTPRequest):
         {"$set": {"otp": otp, "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()}}
     )
     
-    await send_otp_email(email, otp)
+    success, err_msg = await send_otp_email(email, otp)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
     
     return {"message": "OTP sent successfully"}
 
@@ -430,7 +436,9 @@ async def login(user_data: UserLogin, response: Response):
             {"email": email},
             {"$set": {"otp": otp, "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()}}
         )
-        await send_otp_email(email, otp)
+        success, err_msg = await send_otp_email(email, otp)
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
         raise HTTPException(status_code=403, detail="Email not verified. OTP sent to your email.")
     
     user_id = str(user["_id"])
@@ -480,7 +488,9 @@ async def forgot_password(data: ForgotPasswordRequest):
         }}
     )
     
-    await send_otp_email(data.email, otp)
+    success, err_msg = await send_otp_email(data.email, otp)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
     return {"message": "OTP sent successfully"}
 
 class ResetPasswordRequest(BaseModel):
@@ -591,7 +601,9 @@ async def change_email(data: ChangeEmail, request: Request, response: Response):
         }}
     )
     
-    await send_otp_email(new_email, otp)
+    success, err_msg = await send_otp_email(new_email, otp)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
     return {"message": "OTP sent to new email. Please verify to complete email change."}
 
 # Verify new email OTP
