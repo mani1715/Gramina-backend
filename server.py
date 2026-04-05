@@ -1139,7 +1139,7 @@ async def translate_texts(data: TranslateRequest):
             return {"translations": data.texts}
         
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         system_prompt = f"""You are a professional translator for a rural job marketplace app in India.
 Translate the following texts to {target}.
