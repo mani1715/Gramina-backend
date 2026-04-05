@@ -8,6 +8,7 @@ python-multipart==0.0.22
 # Database
 motor==3.3.1
 pymongo==4.5.0
+certifi==2024.2.2
 
 # Authentication
 bcrypt==4.1.3

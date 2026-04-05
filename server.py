@@ -22,11 +22,17 @@ from email.mime.multipart import MIMEMultipart
 import json
 import math
 from bson import ObjectId
+import certifi
 
 # MongoDB connection - with fallback for Railway
 mongo_url = os.environ.get('MONGO_URL', os.environ.get('MONGODB_URL', 'mongodb://localhost:27017'))
 db_name = os.environ.get('DB_NAME', 'gramamitra')
-client = AsyncIOMotorClient(mongo_url)
+
+try:
+    client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
+except Exception:
+    client = AsyncIOMotorClient(mongo_url) # Fallback if standard TLS causes issues
+
 db = client[db_name]
 
 # Create the main app
