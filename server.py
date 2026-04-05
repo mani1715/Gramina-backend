@@ -15,10 +15,6 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import bcrypt
 import jwt
-import secrets
-import aiosmtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import json
 import math
 from bson import ObjectId
@@ -143,52 +139,6 @@ async def get_current_user(request: Request) -> dict:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# Email OTP
-async def send_otp_email(email: str, otp: str):
-    message = MIMEMultipart("alternative")
-    message["Subject"] = "GramaMitra - Your OTP Code | మీ OTP కోడ్"
-    message["From"] = os.environ.get("SMTP_USER")
-    message["To"] = email
-    
-    html = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; padding: 20px;">
-        <h2 style="color: #059669;">GramaMitra - గ్రామ మిత్ర</h2>
-        <p>Your verification code is / మీ వెరిఫికేషన్ కోడ్:</p>
-        <h1 style="color: #2563EB; font-size: 36px; letter-spacing: 5px;">{otp}</h1>
-        <p>This code expires in 10 minutes / ఈ కోడ్ 10 నిమిషాలలో ముగుస్తుంది</p>
-        <p style="color: #666;">If you didn't request this, please ignore / మీరు అభ్యర్థించకపోతే, దయచేసి విస్మరించండి</p>
-    </body>
-    </html>
-    """
-    message.attach(MIMEText(html, "html"))
-    
-    try:
-        port = int(os.environ.get("SMTP_PORT", "587"))
-        if port == 465:
-            await aiosmtplib.send(
-                message,
-                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-                port=port,
-                username=os.environ.get("SMTP_USER"),
-                password=os.environ.get("SMTP_PASSWORD"),
-                use_tls=True
-            )
-        else:
-            await aiosmtplib.send(
-                message,
-                hostname=os.environ.get("SMTP_HOST", "smtp.gmail.com"),
-                port=port,
-                username=os.environ.get("SMTP_USER"),
-                password=os.environ.get("SMTP_PASSWORD"),
-                start_tls=True
-            )
-        logger.info(f"OTP sent to {email}")
-        return True, ""
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Failed to send OTP: {error_msg}")
-        return False, error_msg
 
 # Pydantic Models
 class UserCreate(BaseModel):
@@ -322,8 +272,6 @@ async def register(user_data: UserCreate, response: Response):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    otp = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
-    
     user_doc = {
         "name": user_data.name,
         "email": email,
@@ -331,53 +279,12 @@ async def register(user_data: UserCreate, response: Response):
         "phone": user_data.phone,
         "area": user_data.area or "",
         "role": "user",
-        "email_verified": False,
-        "otp": otp,
-        "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+        "email_verified": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    await db.users.insert_one(user_doc)
-    
-    # Send OTP
-    success, err_msg = await send_otp_email(email, otp)
-    if not success:
-        await db.users.delete_one({"email": email})
-        raise HTTPException(status_code=500, detail=f"Failed to send OTP email: {err_msg}. Please check Railway SMTP variables.")
-    
-    return {"message": "Registration successful. Please verify your email.", "email": email}
-
-@api_router.post("/auth/verify-otp")
-async def verify_otp(data: OTPVerify, response: Response):
-    email = data.email.lower()
-    user = await db.users.find_one({"email": email})
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if user.get("email_verified"):
-        raise HTTPException(status_code=400, detail="Email already verified")
-    
-    if user.get("otp") != data.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-    
-    otp_expires = user.get("otp_expires")
-    if otp_expires:
-        # Handle both datetime object and ISO string
-        if isinstance(otp_expires, str):
-            otp_expires = datetime.fromisoformat(otp_expires.replace('Z', '+00:00'))
-        # Make sure otp_expires is timezone aware
-        if otp_expires.tzinfo is None:
-            otp_expires = otp_expires.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) > otp_expires:
-            raise HTTPException(status_code=400, detail="OTP expired")
-    
-    await db.users.update_one(
-        {"email": email},
-        {"$set": {"email_verified": True}, "$unset": {"otp": "", "otp_expires": ""}}
-    )
-    
-    user_id = str(user["_id"])
+    result = await db.users.insert_one(user_doc)
+    user_id = str(result.inserted_id)
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
@@ -386,37 +293,15 @@ async def verify_otp(data: OTPVerify, response: Response):
     
     return {
         "id": user_id,
-        "name": user["name"],
-        "email": user["email"],
-        "phone": user["phone"],
-        "area": user.get("area", ""),
-        "role": user["role"],
-        "email_verified": True
+        "name": user_data.name,
+        "email": email,
+        "phone": user_data.phone,
+        "area": user_data.area or "",
+        "role": "user",
+        "email_verified": True,
+        "message": "Registration successful."
     }
 
-@api_router.post("/auth/resend-otp")
-async def resend_otp(data: OTPRequest):
-    email = data.email.lower()
-    user = await db.users.find_one({"email": email})
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if user.get("email_verified"):
-        raise HTTPException(status_code=400, detail="Email already verified")
-    
-    otp = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
-    
-    await db.users.update_one(
-        {"email": email},
-        {"$set": {"otp": otp, "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()}}
-    )
-    
-    success, err_msg = await send_otp_email(email, otp)
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
-    
-    return {"message": "OTP sent successfully"}
 
 @api_router.post("/auth/login")
 async def login(user_data: UserLogin, response: Response):
@@ -429,18 +314,6 @@ async def login(user_data: UserLogin, response: Response):
     if not verify_password(user_data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
-    if not user.get("email_verified"):
-        # Send new OTP
-        otp = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
-        await db.users.update_one(
-            {"email": email},
-            {"$set": {"otp": otp, "otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()}}
-        )
-        success, err_msg = await send_otp_email(email, otp)
-        if not success:
-            raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
-        raise HTTPException(status_code=403, detail="Email not verified. OTP sent to your email.")
-    
     user_id = str(user["_id"])
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
@@ -455,7 +328,7 @@ async def login(user_data: UserLogin, response: Response):
         "phone": user["phone"],
         "area": user.get("area", ""),
         "role": user["role"],
-        "email_verified": user.get("email_verified", False)
+        "email_verified": user.get("email_verified", True)
     }
 
 @api_router.post("/auth/logout")
@@ -474,24 +347,7 @@ class ForgotPasswordRequest(BaseModel):
 
 @api_router.post("/auth/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest):
-    user = await db.users.find_one({"email": data.email})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    otp = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
-    
-    await db.users.update_one(
-        {"_id": user["_id"]},
-        {"$set": {
-            "reset_otp": otp,
-            "reset_otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
-        }}
-    )
-    
-    success, err_msg = await send_otp_email(data.email, otp)
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
-    return {"message": "OTP sent successfully"}
+    return {"message": "Password reset is not available. Please contact support."}
 
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
@@ -589,22 +445,12 @@ async def change_email(data: ChangeEmail, request: Request, response: Response):
     if existing and str(existing["_id"]) != user["_id"]:
         raise HTTPException(status_code=400, detail="Email already in use")
     
-    # Generate OTP for new email verification
-    otp = ''.join([str(secrets.randbelow(10)) for _ in range(6)])
-    
+    # Update email directly without OTP verification
     await db.users.update_one(
         {"_id": ObjectId(user["_id"])},
-        {"$set": {
-            "pending_email": new_email,
-            "pending_email_otp": otp,
-            "pending_email_otp_expires": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
-        }}
+        {"$set": {"email": new_email}}
     )
-    
-    success, err_msg = await send_otp_email(new_email, otp)
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {err_msg}")
-    return {"message": "OTP sent to new email. Please verify to complete email change."}
+    return {"message": "Email changed successfully", "email": new_email}
 
 # Verify new email OTP
 @api_router.post("/profile/verify-email-change")
