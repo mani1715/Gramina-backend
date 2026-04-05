@@ -24,9 +24,10 @@ import certifi
 mongo_url = os.environ.get('MONGO_URL', os.environ.get('MONGODB_URL', 'mongodb://localhost:27017'))
 db_name = os.environ.get('DB_NAME', 'gramamitra')
 
-try:
+# Only enforce TLS if it is an Atlas URL (+srv) or explicit in URL
+if "+srv" in mongo_url or "tls=true" in mongo_url.lower():
     client = AsyncIOMotorClient(mongo_url, tls=True, tlsAllowInvalidCertificates=True, serverSelectionTimeoutMS=5000)
-except Exception:
+else:
     client = AsyncIOMotorClient(mongo_url, serverSelectionTimeoutMS=5000)
 
 db = client[db_name]
@@ -288,8 +289,8 @@ async def register(user_data: UserCreate, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=3600, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="none", max_age=3600, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
     
     return {
         "id": user_id,
@@ -318,8 +319,8 @@ async def login(user_data: UserLogin, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=3600, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=True, samesite="none", max_age=3600, path="/")
+    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
     
     return {
         "id": user_id,
@@ -333,8 +334,8 @@ async def login(user_data: UserLogin, response: Response):
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
+    response.delete_cookie("access_token", path="/", secure=True, samesite="none")
+    response.delete_cookie("refresh_token", path="/", secure=True, samesite="none")
     return {"message": "Logged out successfully"}
 
 @api_router.get("/auth/me")
@@ -1165,10 +1166,14 @@ app.include_router(api_router)
 # Startup event
 @app.on_event("startup")
 async def startup_event():
-    # Create indexes
-    await db.users.create_index("email", unique=True)
-    await db.jobs.create_index("createdBy")
-    await db.applications.create_index([("jobId", 1), ("userId", 1)])
+    # Create indexes with error handling so app doesn't crash if DB is down
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.jobs.create_index("createdBy")
+        await db.applications.create_index([("jobId", 1), ("userId", 1)])
+        logger.info("Database indexes verified.")
+    except Exception as e:
+        logger.error(f"Failed to create indexes. MongoDB might be unreachable: {e}")
     
     # Seed admin (only if ADMIN_EMAIL and ADMIN_PASSWORD are set)
     admin_email = os.environ.get("ADMIN_EMAIL")
