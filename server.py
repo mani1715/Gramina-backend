@@ -61,8 +61,9 @@ FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
 if FRONTEND_URL and FRONTEND_URL.endswith('/'):
     FRONTEND_URL = FRONTEND_URL[:-1]
 
-ALLOWED_ORIGINS = [
-    "*",
+allow_origins=[
+  
+    "https://gramina-frontend-production.up.railway.app"
 ]
 
 # Add frontend URL if provided and not already in list
