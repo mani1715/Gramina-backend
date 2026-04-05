@@ -85,32 +85,7 @@ app.add_middleware(
 # Layer 2: Custom middleware for additional CORS headers
 from starlette.middleware.base import BaseHTTPMiddleware
 
-class AdditionalCORSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        # Handle preflight
-        if request.method == "OPTIONS":
-            return Response(
-                status_code=200,
-                headers={
-                   "Access-Control-Allow-Origin": "https://gramina-frontend-production.up.railway.app",
-                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
-                    "Access-Control-Allow-Headers": "*",
-                    "Access-Control-Allow-Credentials": "true",
-                    "Access-Control-Max-Age": "3600",
-                }
-            )
-        
-        response = await call_next(request)
-        
-        # Ensure CORS headers are present
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        
-        return response
 
-app.add_middleware(AdditionalCORSMiddleware)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
