@@ -63,7 +63,7 @@ if FRONTEND_URL and FRONTEND_URL.endswith('/'):
 
 ALLOWED_ORIGINS=[
   
-    "https://gramina.up.railway.app/"
+    "https://gramina.up.railway.app"
 ]
 
 # Add frontend URL if provided and not already in list
